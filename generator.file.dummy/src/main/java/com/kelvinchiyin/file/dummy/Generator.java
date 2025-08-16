@@ -1,6 +1,9 @@
 package com.kelvinchiyin.file.dummy;
 
 import javax.imageio.ImageIO;
+import javax.imageio.ImageWriteParam;
+import javax.imageio.ImageWriter;
+
 import java.awt.image.BufferedImage;
 import java.io.*;
 import java.util.UUID;
@@ -11,196 +14,365 @@ import com.itextpdf.kernel.pdf.*;
 import com.itextpdf.layout.Document;
 import com.itextpdf.layout.element.*;
 
+/**
+ * Generator is a utility class for creating dummy files of various formats (DOCX, XLSX, PPTX, PDF, JPG)
+ * with a specified target size. It supports generating file content, padding to exact size, and writing files.
+ * <p>
+ * Supported formats: DOCX, XLSX, PPTX, PDF, JPG
+ * </p>
+ * Usage example:
+ * <pre>
+ *     Generator gen = new Generator("output", 1048576); // 1MB
+ *     gen.createAndWriteDocx();
+ * </pre>
+ */
 public class Generator {
-    private long targetSize;
-    private String fileName;
+	private long targetSize;
+	private String fileName;
 
-    public Generator(String fileName, long targetSize) {
-        this.fileName = fileName;
-        this.targetSize = targetSize;
-    }
+	/**
+	 * Constructs a Generator with the given file name and target size in bytes.
+	 * @param fileName the base name for output files (without extension)
+	 * @param targetSize the desired file size in bytes
+	 */
+	public Generator(String fileName, long targetSize) {
+		this.fileName = fileName;
+		this.targetSize = targetSize;
+	}
 
-    // Create file content and return byte array (exactly target size)
-    public byte[] createDocxWithContent() throws IOException {
-        XWPFDocument doc = new XWPFDocument();
-        
-        // Scale content based on target size
-        StringBuilder largeText = new StringBuilder();
-        for (int i = 0; i < Math.max(1000, targetSize / 10000); i++) {
-            largeText.append("DOCX_Line_").append(i)
-                    .append("_").append(UUID.randomUUID().toString().substring(0, 8))
-                    .append("_FillerTextToIncreaseFileSize_");
-        }
+	/**
+	 * Creates a DOCX file content as a byte array, padded to the target size.
+	 * @return byte array representing the DOCX file
+	 * @throws IOException if an I/O error occurs
+	 */
+	public byte[] createDocx() throws IOException {
+		XWPFDocument doc = new XWPFDocument();
+		ByteArrayOutputStream tempBaos = new ByteArrayOutputStream();
 
-        int paragraphs = (int) Math.max(50, targetSize / 200000);
-        for (int i = 0; i < paragraphs; i++) {
-            XWPFParagraph p = doc.createParagraph();
-            XWPFRun run = p.createRun();
-            run.setText(largeText.toString().substring(0, Math.min(largeText.length(), 20000)));
-        }
+		// Create large text chunk
+		StringBuilder chunk = new StringBuilder();
+		for (int i = 0; i < 5000; i++) {
+			chunk.append("DOCX_Chunk_").append(i).append("_").append(UUID.randomUUID().toString().substring(0, 8))
+					.append("_");
+		}
+		String largeChunk = chunk.toString();
 
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        doc.write(baos);
-        doc.close();
+		long safeLimit = (long) (targetSize * 0.95); // Stop at 95% to be safe
+		int paragraphCount = 0;
 
-        return makeExactSize(baos.toByteArray());
-    }
+		// Keep adding content until we're close to target
+		while (paragraphCount < 1000) { // Safety limit
+			XWPFParagraph p = doc.createParagraph();
+			XWPFRun run = p.createRun();
+			run.setText(largeChunk.substring(0, Math.min(largeChunk.length(), 10000)));
 
-    public byte[] createXlsx() throws IOException {
-        XSSFWorkbook wb = new XSSFWorkbook();
-        XSSFSheet sheet = wb.createSheet("Data");
+			paragraphCount++;
 
-        int rows = (int) Math.max(1000, targetSize / 5000);
-        int cols = Math.min(15, Math.max(5, (int)(targetSize / 100000)));
+			// Check size periodically
+			if (paragraphCount % 20 == 0) {
+				tempBaos.reset();
+				doc.write(tempBaos);
+				if (tempBaos.size() > safeLimit) {
+					break;
+				}
+			}
+		}
 
-        StringBuilder baseText = new StringBuilder();
-        for (int i = 0; i < Math.max(1000, targetSize / 5000); i++) {
-            baseText.append("XLSX_Data_").append(i)
-                    .append("_").append(UUID.randomUUID().toString().substring(0, 8))
-                    .append("_");
-        }
-        String largeText = baseText.toString();
+		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+		doc.write(baos);
+		doc.close();
 
-        for (int row = 0; row < rows; row++) {
-            XSSFRow r = sheet.createRow(row);
-            for (int col = 0; col < cols; col++) {
-                XSSFCell cell = r.createCell(col);
-                cell.setCellValue(largeText.substring(0, Math.min(largeText.length(), 1000)) 
-                                + "_R" + row + "_C" + col);
-            }
-        }
+		return padToExactSize(baos.toByteArray());
+	}
 
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        wb.write(baos);
-        wb.close();
+	/**
+	 * Creates an XLSX file content as a byte array, padded to the target size.
+	 * @return byte array representing the XLSX file
+	 * @throws IOException if an I/O error occurs
+	 */
+	public byte[] createXlsx() throws IOException {
+		XSSFWorkbook wb = new XSSFWorkbook();
+		XSSFSheet sheet = wb.createSheet("Data");
 
-        return makeExactSize(baos.toByteArray());
-    }
+		// Very conservative approach - XLSX has huge overhead
+		long targetContentSize = (long) (targetSize * 0.7); // Aim for 70% to account for overhead
 
-    public byte[] createPptx() throws IOException {
-        XMLSlideShow ppt = new XMLSlideShow();
-        
-        int slides = (int) Math.max(20, targetSize / 300000);
-        int textLength = (int) Math.max(2000, targetSize / 100);
+		// Minimal unique content
+		String baseContent = "XLSX_Data_" + UUID.randomUUID().toString().substring(0, 6);
 
-        for (int i = 0; i < slides; i++) {
-            XSLFSlide slide = ppt.createSlide();
-            XSLFTextBox textBox = slide.createTextBox();
-            textBox.setAnchor(new java.awt.Rectangle(20, 20, 900, 600));
-            
-            StringBuilder sb = new StringBuilder();
-            for (int j = 0; j < textLength / 50; j++) {
-                sb.append("Slide_").append(i)
-                  .append("_Item_").append(j)
-                  .append("_").append(UUID.randomUUID().toString().substring(0, 8))
-                  .append("_");
-            }
-            
-            XSLFTextParagraph p = textBox.addNewTextParagraph();
-            XSLFTextRun run = p.addNewTextRun();
-            run.setText(sb.toString());
-        }
+		int rowCount = 0;
+		int colCount = 5; // Fewer columns
+		ByteArrayOutputStream tempBaos = new ByteArrayOutputStream();
+		long currentSize = 0;
 
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        ppt.write(baos);
-        ppt.close();
+		// Add rows until we're close to target content size
+		while (rowCount < 10000 && currentSize < targetContentSize) { // Safety limit
+			XSSFRow row = sheet.createRow(rowCount);
+			for (int col = 0; col < colCount; col++) {
+				XSSFCell cell = row.createCell(col);
+				cell.setCellValue(baseContent + "_R" + rowCount + "_C" + col);
+			}
 
-        return makeExactSize(baos.toByteArray());
-    }
+			rowCount++;
 
-    public byte[] createPdf() throws IOException {
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        PdfWriter writer = new PdfWriter(baos);
-        PdfDocument pdf = new PdfDocument(writer);
-        Document document = new Document(pdf);
+			// Check size every 100 rows (XLSX is expensive to check)
+			if (rowCount % 100 == 0) {
+				tempBaos.reset();
+				wb.write(tempBaos);
+				currentSize = tempBaos.size();
 
-        StringBuilder textChunk = new StringBuilder();
-        for (int i = 0; i < Math.max(1000, targetSize / 2000); i++) {
-            textChunk.append("PDF_Chunk_").append(i)
-                     .append("_").append(UUID.randomUUID().toString().substring(0, 6))
-                     .append("_FillerText_");
-        }
-        String chunk = textChunk.toString();
+				// If we're getting close, stop
+				if (currentSize > targetContentSize * 0.9) {
+					break;
+				}
+			}
+		}
 
-        int paragraphs = (int) Math.max(30, targetSize / 150000);
-        for (int i = 0; i < paragraphs; i++) {
-            document.add(new Paragraph(chunk));
-        }
+		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+		wb.write(baos);
+		wb.close();
 
-        document.close();
+		return padToExactSize(baos.toByteArray());
+	}
 
-        return makeExactSize(baos.toByteArray());
-    }
+	/**
+	 * Creates a PPTX file content as a byte array, padded to the target size.
+	 * @return byte array representing the PPTX file
+	 * @throws IOException if an I/O error occurs
+	 */
+	public byte[] createPptx() throws IOException {
+		XMLSlideShow ppt = new XMLSlideShow();
 
-    public byte[] createJpg() throws IOException {
-        int dimension = (int) Math.sqrt(targetSize / 3);
-        dimension = Math.max(1000, Math.min(dimension, 15000));
+		// Be very conservative with PPTX since it has high overhead
+		int maxSlides = Math.max(5, (int) (targetSize / 300000));
+		int textLength = Math.max(1000, (int) (targetSize / 500));
 
-        BufferedImage img = new BufferedImage(dimension, dimension, BufferedImage.TYPE_INT_RGB);
-        java.awt.Graphics2D g = img.createGraphics();
-        g.setColor(java.awt.Color.WHITE);
-        g.fillRect(0, 0, dimension, dimension);
-        g.setColor(java.awt.Color.BLUE);
-        g.drawString("Test Image", 100, 100);
-        g.dispose();
+		// Create content
+		StringBuilder content = new StringBuilder();
+		for (int i = 0; i < textLength / 20; i++) {
+			content.append("PPTX_").append(i).append("_").append(UUID.randomUUID().toString().substring(0, 4)).append("_");
+		}
+		String slideText = content.toString();
 
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        ImageIO.write(img, "jpg", baos);
-        baos.close();
+		// Add limited number of slides
+		for (int i = 0; i < Math.min(100, maxSlides); i++) {
+			XSLFSlide slide = ppt.createSlide();
+			XSLFTextBox textBox = slide.createTextBox();
+			textBox.setAnchor(new java.awt.Rectangle(20, 20, 800, 500));
 
-        return makeExactSize(baos.toByteArray());
-    }
+			XSLFTextParagraph p = textBox.addNewTextParagraph();
+			XSLFTextRun run = p.addNewTextRun();
+			run.setText(slideText);
+		}
 
-    // Ensure byte array is exactly target size
-    private byte[] makeExactSize(byte[] data) {
-        if (data.length == targetSize) {
-            return data;
-        } else if (data.length > targetSize) {
-            // Truncate
-            byte[] result = new byte[(int) targetSize];
-            System.arraycopy(data, 0, result, 0, (int) targetSize);
-            System.out.println("WARNING: Content truncated from " + data.length + " to " + targetSize + " bytes");
-            return result;
-        } else {
-            // Pad
-            byte[] result = new byte[(int) targetSize];
-            System.arraycopy(data, 0, result, 0, data.length);
-            // Rest is already 0-filled
-            return result;
-        }
-    }
+		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+		ppt.write(baos);
+		ppt.close();
 
-    // Write byte array to file
-    public void writeFile(String filePath, byte[] data) throws IOException {
-        try (FileOutputStream fos = new FileOutputStream(filePath)) {
-            fos.write(data);
-        }
-        System.out.println(filePath + ": " + new File(filePath).length() + " bytes");
-    }
+		return padToExactSize(baos.toByteArray());
+	}
 
-    // Convenience methods that create and write
-    public void createAndWriteDocx() throws IOException {
-        byte[] data = createDocxWithContent();
-        writeFile(fileName + ".docx", data);
-    }
+	/**
+	 * Creates a PDF file content as a byte array, padded to the target size.
+	 * @return byte array representing the PDF file
+	 * @throws IOException if an I/O error occurs
+	 */
+	public byte[] createPdf() throws IOException {
+		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+		PdfWriter writer = new PdfWriter(baos);
+		PdfDocument pdf = new PdfDocument(writer);
+		Document document = new Document(pdf);
 
-    public void createAndWriteXlsx() throws IOException {
-        byte[] data = createXlsx();
-        writeFile(fileName + ".xlsx", data);
-    }
+		// Create content chunk
+		StringBuilder chunk = new StringBuilder();
+		for (int i = 0; i < 2000; i++) {
+			chunk.append("PDF_Chunk_").append(i).append("_").append(UUID.randomUUID().toString().substring(0, 6))
+					.append("_FillerText_");
+		}
+		String content = chunk.toString();
 
-    public void createAndWritePptx() throws IOException {
-        byte[] data = createPptx();
-        writeFile(fileName + ".pptx", data);
-    }
+		// Add moderate number of paragraphs to stay under target
+		int maxParagraphs = (int) Math.max(50, targetSize / 50000);
+		for (int i = 0; i < maxParagraphs; i++) {
+			document.add(new Paragraph(content));
 
-    public void createAndWritePdf() throws IOException {
-        byte[] data = createPdf();
-        writeFile(fileName + ".pdf", data);
-    }
+			// Periodically check if we're getting close to target
+			if (i % 30 == 0 && i > 0) {
+				// Estimate current size without closing document
+				long estimatedSize = (long) baos.size() + (baos.size() * i / 30); // Rough estimation
+				if (estimatedSize > targetSize * 0.9) {
+					break; // Stop before getting too close
+				}
+			}
+		}
 
-    public void createAndWriteJpg() throws IOException {
-        byte[] data = createJpg();
-        writeFile(fileName + ".jpg", data);
-    }
+		document.close();
+		return padToExactSize(baos.toByteArray());
+	}
+
+	/**
+	 * Creates a JPG image as a byte array, padded to the target size.
+	 * For very small sizes, creates a minimal valid JPG.
+	 * @return byte array representing the JPG image
+	 * @throws IOException if an I/O error occurs
+	 */
+	public byte[] createJpg() throws IOException {
+		if (targetSize < 1024) {
+			// For very small sizes, create minimal content
+			byte[] minimalJpg = createMinimalJpg();
+			return padToExactSize(minimalJpg);
+		}
+
+		// Calculate image dimensions based on target size
+		// Rough estimate: width * height * 3 bytes (RGB) ≈ target size
+		// But JPEG compression makes this tricky, so we estimate smaller
+		long pixelsNeeded = targetSize / 6; // Conservative estimate due to compression
+		int dimension = (int) Math.sqrt(pixelsNeeded);
+		dimension = Math.max(100, Math.min(dimension, 5000)); // Reasonable limits
+
+		BufferedImage img = new BufferedImage(dimension, dimension, BufferedImage.TYPE_INT_RGB);
+		java.awt.Graphics2D g = img.createGraphics();
+		g.setColor(java.awt.Color.WHITE);
+		g.fillRect(0, 0, dimension, dimension);
+		g.setColor(java.awt.Color.BLUE);
+		g.drawString("Test", 10, 20);
+		g.dispose();
+
+		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+
+		// Use lower quality for better size control
+		ImageWriter writer = ImageIO.getImageWritersByFormatName("jpg").next();
+		ImageWriteParam param = writer.getDefaultWriteParam();
+		if (param.canWriteCompressed()) {
+			param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+			param.setCompressionQuality(0.7f); // Lower quality = smaller size
+		}
+
+		writer.setOutput(ImageIO.createImageOutputStream(baos));
+		writer.write(null, new javax.imageio.IIOImage(img, null, null), param);
+		writer.dispose();
+
+		return padToExactSize(baos.toByteArray());
+	}
+
+	/**
+	 * Creates a minimal valid JPG for very small target sizes.
+	 * @return byte array of a minimal JPG
+	 * @throws IOException if an I/O error occurs
+	 */
+	private byte[] createMinimalJpg() throws IOException {
+		// Create a 1x1 pixel image
+		BufferedImage img = new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB);
+		java.awt.Graphics2D g = img.createGraphics();
+		g.setColor(java.awt.Color.WHITE);
+		g.fillRect(0, 0, 1, 1);
+		g.dispose();
+
+		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+		ImageIO.write(img, "jpg", baos);
+		return baos.toByteArray();
+	}
+
+	/**
+	 * Pads the given byte array to the exact target size with zeros if needed.
+	 * Never truncates to avoid file corruption.
+	 * @param data the original file data
+	 * @return a byte array of exact target size
+	 */
+	private byte[] padToExactSize(byte[] data) {
+		if (data.length > targetSize) {
+			System.out.println("WARNING: Generated " + data.length + " bytes, target is " + targetSize);
+			System.out.println("File would be truncated and become corrupted - returning as-is");
+			return data; // Don't truncate, return oversized file
+		} else if (data.length < targetSize) {
+			// Pad with zeros
+			byte[] result = new byte[(int) targetSize];
+			System.arraycopy(data, 0, result, 0, data.length);
+			return result;
+		} else {
+			return data; // Already exact size
+		}
+	}
+
+	/**
+	 * Writes the given byte array to a file with the specified filename.
+	 * @param filename the output file name
+	 * @param data the file data to write
+	 * @throws IOException if an I/O error occurs
+	 */
+	public void writeFile(String filename, byte[] data) throws IOException {
+		try (FileOutputStream fos = new FileOutputStream(filename)) {
+			fos.write(data);
+		}
+		System.out.println(filename + ": " + new File(filename).length() + " bytes");
+	}
+
+	/**
+	 * Creates and writes a DOCX file to disk with the target size.
+	 * @throws IOException if an I/O error occurs
+	 */
+	public void createAndWriteDocx() throws IOException {
+		byte[] data = createDocx();
+		if (data.length <= targetSize) {
+			writeFile(fileName + ".docx", data);
+		} else {
+			System.out.println("DOCX file too large (" + data.length + " bytes), not writing to avoid corruption");
+		}
+	}
+
+	/**
+	 * Creates and writes an XLSX file to disk with the target size.
+	 * @throws IOException if an I/O error occurs
+	 */
+	public void createAndWriteXlsx() throws IOException {
+		byte[] data = createXlsx();
+		if (data.length <= targetSize) {
+			writeFile(fileName + ".xlsx", data);
+		} else {
+			System.out.println("XLSX file too large (" + data.length + " bytes), not writing to avoid corruption");
+		}
+	}
+
+	/**
+	 * Creates and writes a PPTX file to disk with the target size.
+	 * @throws IOException if an I/O error occurs
+	 */
+	public void createAndWritePptx() throws IOException {
+		byte[] data = createPptx();
+		if (data.length <= targetSize) {
+			writeFile(fileName + ".pptx", data);
+		} else {
+			System.out.println("PPTX file too large (" + data.length + " bytes), not writing to avoid corruption");
+		}
+	}
+
+	/**
+	 * Creates and writes a PDF file to disk with the target size.
+	 * @throws IOException if an I/O error occurs
+	 */
+	public void createAndWritePdf() throws IOException {
+		byte[] data = createPdf();
+		if (data.length <= targetSize) {
+			writeFile(fileName + ".pdf", data);
+		} else {
+			System.out.println("PDF file too large (" + data.length + " bytes), not writing to avoid corruption");
+		}
+	}
+
+	/**
+	 * Creates and writes a JPG file to disk with the target size.
+	 * @throws IOException if an I/O error occurs
+	 */
+	public void createAndWriteJpg() throws IOException {
+		byte[] data = createJpg();
+		writeFile(fileName + ".jpg", data); // JPG is less sensitive to padding
+	}
+
+	/**
+	 * Sets a new target size for file generation.
+	 * @param targetSize the new target size in bytes
+	 */
+	public void setTargetSize(long targetSize) {
+		this.targetSize = targetSize;
+	}
 }
